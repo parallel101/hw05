@@ -56,6 +56,7 @@ std::string do_queryuser(std::string username) {
 struct ThreadPool {
     void create(std::function<void()> start) {
         // 作业要求3：如何让这个线程保持在后台执行不要退出？
+        // 提示：改成 async 和 future 且用法正确也可以加分
         std::thread thr(start);
     }
 };
