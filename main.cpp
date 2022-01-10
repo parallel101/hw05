@@ -18,8 +18,8 @@ struct User {
     std::string phone;
 };
 
-std::shared_mutex users_mtx;
-std::shared_mutex has_login_mtx;
+std::shared_mutex get_mtx;
+std::shared_mutex user_login_mtx;
 std::unordered_map<std::string, User> users;
 std::unordered_map<std::string, decltype(std::chrono::steady_clock::now())> has_login;  // 换成 std::chrono::seconds 之类的
 
@@ -27,7 +27,7 @@ std::unordered_map<std::string, decltype(std::chrono::steady_clock::now())> has_
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
 std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
     User user = {password, school, phone};
-    std::unique_lock grd{users_mtx};
+    std::unique_lock grd{get_mtx};
     if (users.emplace(username, user).second)
         return "注册成功";
     else
@@ -39,7 +39,7 @@ std::string do_login(std::string username, std::string password) {
     // long now = time(NULL);   // C 语言当前时间
     auto now = std::chrono::steady_clock::now();
     {
-        std::shared_lock grd{has_login_mtx};
+        std::shared_lock grd{user_login_mtx};
         if (has_login.find(username) != has_login.end())
         {
             // int sec = now - has_login.at(username);  // C 语言算时间差
@@ -50,11 +50,11 @@ std::string do_login(std::string username, std::string password) {
         }
     }
     {
-        std::unique_lock grd{has_login_mtx};
+        std::unique_lock grd{user_login_mtx};
         has_login[username] = now;
     }
 
-    std::shared_lock grd{users_mtx};
+    std::shared_lock grd{get_mtx};
     if (users.find(username) == users.end())
         return "用户名错误";
     if (users.at(username).password != password)
@@ -63,7 +63,7 @@ std::string do_login(std::string username, std::string password) {
 }
 
 std::string do_queryuser(std::string username) {
-    std::shared_lock grd{users_mtx};
+    std::shared_lock grd{get_mtx};
     if (users.find(username) == users.end())
         return "没有该用户";
     auto &user = users.at(username);
