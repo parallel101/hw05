@@ -36,14 +36,12 @@ std::mutex mtx_reg, mtx_log, mtx_que, mtx_release;
 // 作业要求1：把这些函数变成多线程安全的
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
 std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
-    // mtx.lock();
     std::lock_guard guard(mtx_reg);
     User user = {password, school, phone};
     if (users.emplace(username, user).second)
         return "注册成功";
     else
         return "用户名已被注册";
-    // mtx.unlock();
 }
 
 // std::string do_login(std::string username, std::string password) {
@@ -101,7 +99,7 @@ class ThreadPool {
      * 
      */
     public:
-        ThreadPool(int length=1000):size(length) {
+        ThreadPool(int length=100):size(length) {
             temp.resize(length);
             work.resize(length);
             idx = 0;
@@ -119,28 +117,26 @@ class ThreadPool {
             idx++;
             if(idx==size){
                 std::swap(temp, work);
-                auto release = std::thread([&]{
-                    std::lock_guard guard(mtx_release);
-                    std::for_each(work.begin(), work.end(), std::mem_fn(&std::thread::join));
-                    work.clear();
-                    work.resize(size);
-                    });
-                release.join();
+                task_processing(work);
+                // release.join();
                 idx = 0;
             }
-            
+            if(release.joinable()) release.join();
         }
         ~ThreadPool(){
-            std::for_each(temp.begin(), temp.begin()+idx, std::mem_fn(&std::thread::join));
+            for(int i = 0; i<idx;i++) temp[i].join();
         }
     private:
         unsigned long size;
-        unsigned long idx;
+        std::atomic<unsigned long >idx;
         std::vector<std::thread> temp, work;
+        std::thread release;
         void task_processing(std::vector<std::thread> &work){
-            std::for_each(work.begin(), work.end(), std::mem_fn(&std::thread::join));
-            work.clear();
-            work.resize(size);
+            release = std::move(std::thread([&]{
+                std::for_each(work.begin(), work.end(), std::mem_fn(&std::thread::join));
+                work.clear();
+                work.resize(size);
+            }));
         }
 };
 
@@ -157,7 +153,7 @@ std::string phone[] = {"110", "119", "120", "12315"};
 int main() {
     auto tick = std::chrono::steady_clock::now();
    for (int i = 0; i < 262144; i++) {
-        std::cout<<"---------------"<<i<<"---------------"<<std::endl;
+        // std::cout<<"---------------"<<i<<"---------------"<<std::endl;
         tpool.create([&] {
             std::cout << do_register(test::username[rand() % 4], test::password[rand() % 4], test::school[rand() % 4], test::phone[rand() % 4]) << std::endl;
             // do_register(test::username[rand() % 4], test::password[rand() % 4], test::school[rand() % 4], test::phone[rand() % 4]);
@@ -174,7 +170,7 @@ int main() {
     // 作业要求4：等待 tpool 中所有线程都结束后再退出
     // have already implemented in the definition of ThreadPool.
     auto tock = std::chrono::steady_clock::now();
-
-    std::cout<<std::endl<<"Duration: "<<std::chrono::duration_cast<std::chrono::milliseconds>(tock - tick).count()<<"ms"<<std::endl;
+    std::string ret = "Duration: "+std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(tock - tick).count())+"ms";
+    std::cout<<ret<<std::endl;
     return 0;
 }

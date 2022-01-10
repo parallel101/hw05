@@ -9,4 +9,7 @@ endif()
 add_executable(main main.cpp)
 
 find_package(Threads REQUIRED)
+find_package(OpenMP REQUIRED)
 target_link_libraries(main PUBLIC Threads::Threads)
+target_link_libraries(main PUBLIC OpenMP::OpenMP_CXX)
+target_compile_options(main PUBLIC -O3  -ffast-math -march=native)
