@@ -5,7 +5,11 @@
 #include <cstdlib>
 #include <string>
 #include <thread>
-#include <map>
+#include <unordered_map>
+#include <chrono>
+#include <vector>
+#include <mutex>
+#include <shared_mutex>
 
 
 struct User {
@@ -14,13 +18,31 @@ struct User {
     std::string phone;
 };
 
-std::map<std::string, User> users;
-std::map<std::string, long> has_login;  // 换成 std::chrono::seconds 之类的
+
+std::unordered_map<std::string, User> users;
+std::shared_mutex users_mtx;
+std::shared_mutex has_login_mtx;
+
+
+// 时间点类型：chrono::steady_clock::time_point 
+// 时间段类型：chrono::seconds
+// 换成 std::chrono::seconds 之类的
+std::unordered_map<std::string, decltype(std::chrono::steady_clock::now())> has_login;  
+
+
+
 
 // 作业要求1：把这些函数变成多线程安全的
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
-bool do_register(std::string username, std::string password, std::string school, std::string phone) {
+std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
     User user = {password, school, phone};
+    
+    //std::unique_lock grd(users_mtx);
+    // std::lock_guard 就是这样一个工具类，他的构造函数里会调用 mtx.lock()，
+    //解构函数会调用 mtx.unlock()。从而退出函数作用域时能够自动解锁，
+    //避免程序员粗心不小心忘记解锁
+    std::lock_guard grd(users_mtx);
+
     if (users.emplace(username, user).second)
         return "注册成功";
     else
@@ -29,13 +51,23 @@ bool do_register(std::string username, std::string password, std::string school,
 
 std::string do_login(std::string username, std::string password) {
     // 作业要求2：把这个登录计时器改成基于 chrono 的
-    long now = time(NULL);   // C 语言当前时间
-    if (has_login.find(username) != has_login.end()) {
-        int sec = now - has_login.at(username);  // C 语言算时间差
-        return std::to_string(sec) + "秒内登录过";
-    }
-    has_login[username] = now;
+    // long now = time(NULL);   // C 语言当前时间
 
+    auto now = std::chrono::steady_clock::now();
+    {
+        std::shared_lock grd(has_login_mtx);
+        if(has_login.find(username) != has_login.end())
+        {
+            auto sec = now - has_login.at(username); 
+            int64_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(sec).count();
+            return std::to_string(ms) + "秒内登录过";
+        }
+    }    
+    { 
+        std::unique_lock grd{has_login_mtx};
+        has_login[username] = now;
+    }
+    std::shared_lock grd{users_mtx};
     if (users.find(username) == users.end())
         return "用户名错误";
     if (users.at(username).password != password)
@@ -44,6 +76,9 @@ std::string do_login(std::string username, std::string password) {
 }
 
 std::string do_queryuser(std::string username) {
+    std::shared_lock grd{users_mtx};
+    if(users.find(username) == users.end())
+        return "没有此用户";
     auto &user = users.at(username);
     std::stringstream ss;
     ss << "用户名: " << username << std::endl;
@@ -54,10 +89,25 @@ std::string do_queryuser(std::string username) {
 
 
 struct ThreadPool {
+
+
+    std::vector<std::thread> m_pool;
+    std::mutex m_mtx;
+
     void create(std::function<void()> start) {
         // 作业要求3：如何让这个线程保持在后台执行不要退出？
         // 提示：改成 async 和 future 且用法正确也可以加分
-        std::thread thr(start);
+        auto fret = std::async(start);
+        std::lock_guard grd{m_mtx};
+        m_pool.push_back(std::move(fret));
+    }
+
+    ~ThreadPool()
+    {
+        for(auto &t : m_pool)
+        {
+                t.join();
+        }
     }
 };
 
