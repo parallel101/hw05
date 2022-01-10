@@ -2,6 +2,7 @@
 #include <functional>
 #include <iostream>
 #include <sstream>
+#include <unordered_map>
 #include <cstdlib>
 #include <string>
 #include <thread>
@@ -16,7 +17,7 @@ struct User {
     std::string phone;
 };
 
-std::map<std::string, User> users;
+std::unordered_map <std::string, User> users;
 std::shared_mutex g_user_mu{};
 
 std::map<std::string, std::chrono::system_clock::time_point> has_login;  // 换成 std::chrono::seconds 之类的
