@@ -24,13 +24,15 @@ std::map<std::string, decltype(now)> has_login;  // 换成 std::chrono::seconds 
 
 // user资源的读写锁
 std::shared_mutex mtx;
+// has_login的锁
+std::mutex mtx2;
 
 
 // 作业要求1：把这些函数变成多线程安全的
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
 std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
     User user = {password, school, phone};
-    std::shared_lock grd{ mtx };
+    std::unique_lock grd{ mtx };
     if (users.emplace(username, user).second)
         return "注册成功";
     else
@@ -40,6 +42,8 @@ std::string do_register(std::string username, std::string password, std::string 
 std::string do_login(std::string username, std::string password) {
     // 作业要求2：把这个登录计时器改成基于 chrono 的
     auto now = std::chrono::steady_clock::now();
+    
+    std::unique_lock lck{mtx2};
     if (has_login.find(username) != has_login.end()) {
         auto dt = now - has_login.at(username);
         // 登录过期时间判断;
@@ -49,8 +53,9 @@ std::string do_login(std::string username, std::string password) {
         }
     }
     has_login[username] = now;
+    lck.unlock();
 
-    std::unique_lock grd {mtx};
+    std::shared_lock grd {mtx};
     if (users.find(username) == users.end())
         return "用户名错误";
     if (users.at(username).password != password)
@@ -59,7 +64,7 @@ std::string do_login(std::string username, std::string password) {
 }
 
 std::string do_queryuser(std::string username) {
-    std::unique_lock grd {mtx};
+    std::shared_lock grd {mtx};
     if ( users.find(username) == users.end() ) {
         return "没有该用户";
     }
