@@ -43,10 +43,9 @@ std::string do_login(std::string username, std::string password) {
         if (has_login.find(username) != has_login.end())
         {
             // int sec = now - has_login.at(username);  // C 语言算时间差
-            auto sec = std::chrono::duration_cast<
-                           std::chrono::seconds>(
-                           now - has_login.at(username))
-                           .count();
+            // 时间段类型：chrono::milliseconds
+            auto  dt = now - has_login.at(username);
+            auto sec = std::chrono::duration_cast<std::chrono::seconds>(dt).count();
             return std::to_string(sec) + "秒内登录过";
         }
     }
