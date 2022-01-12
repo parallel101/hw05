@@ -8,6 +8,8 @@
 #include <map>
 #include <mutex>
 #include <shared_mutex>
+#include <chrono>
+#include <unordered_map>
 
 struct User
 {
@@ -16,8 +18,10 @@ struct User
     std::string phone;
 };
 
-std::map<std::string, User> users;
-std::map<std::string, long> has_login;  // 换成 std::chrono::seconds 之类的
+using TimePoint = std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds>;
+
+std::unordered_map<std::string, User> users;
+std::unordered_map<std::string, TimePoint> has_login;  // 换成 std::chrono::seconds 之类的
 
 std::shared_mutex mtx_user;
 std::shared_mutex mtx_login;
@@ -42,17 +46,19 @@ std::string do_login(std::string username, std::string password) {
     WriteLock lock_log(mtx_login);
 
     // 作业要求2：把这个登录计时器改成基于 chrono 的
-    long now = time(NULL);   // C 语言当前时间
+    //long now = time(NULL);   // C 语言当前时间
+    TimePoint now = std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::system_clock::now());
     if (has_login.find(username) != has_login.end())
     {
-        int sec = now - has_login.at(username);  // C 语言算时间差
-        return username + "在" + std::to_string(sec) + "秒内登录过\n";
+        //int sec = now - has_login.at(username);  // C 语言算时间差
+        auto sec = (now - has_login[username]).count();
+        return username + "在" + std::to_string(sec) + "毫秒内登录过\n";
     }
     has_login[username] = now;
 
     if (users.find(username) == users.end())
         return "用户名错误\n";
-    if (users.at(username).password != password)
+    if (users[username].password != password)
         return "密码错误\n";
     return "登录成功\n";
 }
@@ -61,7 +67,7 @@ std::string do_queryuser(std::string username) {
     ReadLock lock(mtx_user);
 
     if(users.find(username) == users.end()) return "用户未找到\n";
-    auto &user = users.at(username);
+    auto &user = users[username];
     std::stringstream ss;
     ss << "用户名: " << username << std::endl;
     ss << "学校: " << user.school << std::endl;
@@ -103,7 +109,7 @@ int main() {
     {
         size_t randomNums[7];
         for(int i = 0; i < 7; ++i) randomNums[i] = rand() % 4;
-        
+
         tpool.create([&] {
             std::cout << do_register(test::username[randomNums[0]], test::password[randomNums[1]], test::school[randomNums[2]], test::phone[randomNums[3]]) << std::endl;
         });
