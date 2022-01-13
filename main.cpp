@@ -65,7 +65,7 @@ std::string do_login(std::string username, std::string password) {
 }
 
 std::string do_queryuser(std::string username) {
-    std::lock_guard guard(mtx);
+    std::shared_lock guard(mtx);
     if(users.find(username)!=users.end()){
         auto &user = users.at(username);
         std::stringstream ss;
