@@ -1,6 +1,6 @@
 /**
  * @file main.cpp
- * @author Zhao Gong (gongzhao1995@outlook.com)
+ * @author The one who cannot be named.
  * @brief Thie is the 5th homework of HPC
  * @version 0.1
  * @date 2022-01-10
@@ -21,6 +21,7 @@
 #include<vector>
 #include<mutex>
 #include<algorithm>
+#include<shared_mutex>
 struct User {
     std::string password;
     std::string school;
@@ -28,15 +29,15 @@ struct User {
 };
 
 std::map<std::string, User> users;
-// std::map<std::string, long> has_login;  // 换成 std::chrono::seconds 之类的
 std::map<std::string, std::chrono::time_point<std::chrono::steady_clock>> has_login;
-std::mutex mtx_reg, mtx_log, mtx_que, mtx_release;
+std::shared_mutex mtx;
+std::mutex mtx_login;
 
 
 // 作业要求1：把这些函数变成多线程安全的
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
 std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
-    std::lock_guard guard(mtx_reg);
+    std::unique_lock guard(mtx);
     User user = {password, school, phone};
     if (users.emplace(username, user).second)
         return "注册成功";
@@ -44,34 +45,18 @@ std::string do_register(std::string username, std::string password, std::string 
         return "用户名已被注册";
 }
 
-// std::string do_login(std::string username, std::string password) {
-//     // 作业要求2：把这个登录计时器改成基于 chrono 的
-//     long now = time(NULL);   // C 语言当前时间
-//     if (has_login.find(username) != has_login.end()) {
-//         int sec = now - has_login.at(username);  // C 语言算时间差
-//         return std::to_string(sec) + "秒内登录过";
-//     }
-//     std::lock_guard guard(mtx);
-//     has_login[username] = now;
-
-//     if (users.find(username) == users.end())
-//         return "用户名错误";
-//     if (users.at(username).password != password)
-//         return "密码错误";
-//     return "登录成功";
-// }
-
 std::string do_login(std::string username, std::string password) {
     // 作业要求2：把这个登录计时器改成基于 chrono 的
-    std::lock_guard guard(mtx_log);
+    std::shared_lock guard(mtx);
     auto now = std::chrono::steady_clock::now();   // Current time acquired from std::chrono
     if (has_login.find(username) != has_login.end()) {
         auto time = std::chrono::steady_clock::now();
         auto sec = std::chrono::duration_cast<std::chrono::seconds>(time - has_login.at(username)).count();
         return std::to_string(sec) + "秒内登录过";
     }
-    
+    std::unique_lock guard_(mtx_login);
     has_login[username] = now;
+    guard_.unlock();
     if (users.find(username) == users.end())
         return "用户名错误";
     if (users.at(username).password != password)
@@ -80,7 +65,7 @@ std::string do_login(std::string username, std::string password) {
 }
 
 std::string do_queryuser(std::string username) {
-    std::lock_guard guard(mtx_que);
+    std::lock_guard guard(mtx);
     if(users.find(username)!=users.end()){
         auto &user = users.at(username);
         std::stringstream ss;
@@ -92,10 +77,13 @@ std::string do_queryuser(std::string username) {
         return "Cannot find user!" + username;
 }
 
-
-class ThreadPool {
+/**
+ * @brief This pool is not completely thread safe.
+ * 
+ */
+struct ThreadPool {
     /**
-     * @brief This pool is thread safe.
+     * @brief I assume every public member function is unlocked. 
      * 
      */
     public:
@@ -107,7 +95,7 @@ class ThreadPool {
         /**
          * @brief implement concurrent processing method
          * @todo implement asynchornize processing methods.
-         * @param start 
+         * @param start: request queries. 
          */
         void create(std::function<void()> start) {
             // 作业要求3：如何让这个线程保持在后台执行不要退出？
@@ -118,7 +106,7 @@ class ThreadPool {
             if(idx==size){
                 std::swap(temp, work);
                 task_processing(work);
-                // release.join();
+                release.join();
                 idx = 0;
             }
             if(release.joinable()) release.join();
@@ -127,6 +115,10 @@ class ThreadPool {
             for(int i = 0; i<idx;i++) temp[i].join();
         }
     private:
+        /**
+         * @brief It should be awared that we should assume every mutex is locked when implementing private member function
+         * 
+         */
         unsigned long size;
         std::atomic<unsigned long >idx;
         std::vector<std::thread> temp, work;
@@ -153,22 +145,18 @@ std::string phone[] = {"110", "119", "120", "12315"};
 int main() {
     auto tick = std::chrono::steady_clock::now();
    for (int i = 0; i < 262144; i++) {
-        // std::cout<<"---------------"<<i<<"---------------"<<std::endl;
         tpool.create([&] {
             std::cout << do_register(test::username[rand() % 4], test::password[rand() % 4], test::school[rand() % 4], test::phone[rand() % 4]) << std::endl;
-            // do_register(test::username[rand() % 4], test::password[rand() % 4], test::school[rand() % 4], test::phone[rand() % 4]);
         });
         tpool.create([&] {
             std::cout << do_login(test::username[rand() % 4], test::password[rand() % 4]) << std::endl;
-            // do_login(test::username[rand() % 4], test::password[rand() % 4]);
         });
         tpool.create([&] {
             std::cout << do_queryuser(test::username[rand() % 4]) << std::endl;
-            // do_queryuser(test::username[rand() % 4]);
         });
     }
     // 作业要求4：等待 tpool 中所有线程都结束后再退出
-    // have already implemented in the definition of ThreadPool.
+    // have already implemented in the deconstruction function of ThreadPool.
     auto tock = std::chrono::steady_clock::now();
     std::string ret = "Duration: "+std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(tock - tick).count())+"ms";
     std::cout<<ret<<std::endl;
