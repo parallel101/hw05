@@ -55,11 +55,6 @@ std::string do_login(std::string username, std::string password) {
     std::shared_lock grd(sm1);
     if (users.find(username) == users.end())
     {
-        // for(auto [i,j]:users)
-        // {
-        //     std::cout<<i<<std::endl;
-        // }
-        // std::cout<<username<<" "<<"!"<<std::endl;
         return "用户名错误";
     }
     if (users.at(username).password != password)
@@ -112,7 +107,7 @@ std::string phone[] = {"110", "119", "120", "12315"};
 }
 
 int main() {
-    for (int i = 0; i < 26; i++) {//262144
+    for (int i = 0; i < 10; i++) {//262144
         tpool.create([&] {
             std::cout << do_register(test::username[rand() % 4], test::password[rand() % 4], test::school[rand() % 4], test::phone[rand() % 4]) << std::endl;
         });
