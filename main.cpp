@@ -1,4 +1,4 @@
-// å°å½­è€å¸ˆä½œä¸š05ï¼šå‡è£…æ˜¯å¤šçº¿ç¨‹ HTTP æœåŠ¡å™¨ - å¯Œè¿ç½‘å¤§å‚é¢è¯•å®˜è§‰å¾—å¾ˆèµ
+// Ğ¡ÅíÀÏÊ¦×÷Òµ05£º¼Ù×°ÊÇ¶àÏß³Ì HTTP ·şÎñÆ÷ - ¸»Á¬Íø´ó³§ÃæÊÔ¹Ù¾õµÃºÜÔŞ
 #include <functional>
 #include <iostream>
 #include <sstream>
@@ -6,68 +6,93 @@
 #include <string>
 #include <thread>
 #include <map>
-
+#include <shared_mutex>
+#include <chrono>
 
 struct User {
     std::string password;
     std::string school;
     std::string phone;
+
 };
 
-std::map<std::string, User> users;
-std::map<std::string, long> has_login;  // æ¢æˆ std::chrono::seconds ä¹‹ç±»çš„
 
-// ä½œä¸šè¦æ±‚1ï¼šæŠŠè¿™äº›å‡½æ•°å˜æˆå¤šçº¿ç¨‹å®‰å…¨çš„
-// æç¤ºï¼šèƒ½æ­£ç¡®åˆ©ç”¨ shared_mutex åŠ åˆ†ï¼Œç”¨ lock_guard ç³»åˆ—åŠ åˆ†
+std::shared_mutex m_mtx1;
+std::shared_mutex m_mtx2;
+std::shared_mutex m_mtx3;
+std::shared_mutex m_mtx4;
+
+std::map<std::string, User> users;
+//std::map<std::string, long> has_login;  // »»³É std::chrono::seconds Ö®ÀàµÄ
+std::map<std::string, std::chrono::steady_clock::time_point> has_login;
+
+// ×÷ÒµÒªÇó1£º°ÑÕâĞ©º¯Êı±ä³É¶àÏß³Ì°²È«µÄ
+// ÌáÊ¾£ºÄÜÕıÈ·ÀûÓÃ shared_mutex ¼Ó·Ö£¬ÓÃ lock_guard ÏµÁĞ¼Ó·Ö
 std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
+    std::unique_lock grd(m_mtx1);
     User user = {password, school, phone};
     if (users.emplace(username, user).second)
-        return "æ³¨å†ŒæˆåŠŸ";
+        return "×¢²á³É¹¦";
     else
-        return "ç”¨æˆ·åå·²è¢«æ³¨å†Œ";
+        return "ÓÃ»§ÃûÒÑ±»×¢²á";
 }
 
 std::string do_login(std::string username, std::string password) {
-    // ä½œä¸šè¦æ±‚2ï¼šæŠŠè¿™ä¸ªç™»å½•è®¡æ—¶å™¨æ”¹æˆåŸºäº chrono çš„
-    long now = time(NULL);   // C è¯­è¨€å½“å‰æ—¶é—´
-    if (has_login.find(username) != has_login.end()) {
-        int sec = now - has_login.at(username);  // C è¯­è¨€ç®—æ—¶é—´å·®
-        return std::to_string(sec) + "ç§’å†…ç™»å½•è¿‡";
+    // ×÷ÒµÒªÇó2£º°ÑÕâ¸öµÇÂ¼¼ÆÊ±Æ÷¸Ä³É»ùÓÚ chrono µÄ
+    std::shared_lock grd(m_mtx2);
+    auto t0 = std::chrono::steady_clock::now();
+    if(has_login.find(username)!=has_login.end()){
+        auto dt = t0-has_login.at(username);
+        int64_t sec = std::chrono::duration_cast<std::chrono::seconds>(dt).count();
+        return std::to_string(sec) + "ÃëÄÚµÇÂ¼¹ı";
     }
-    has_login[username] = now;
-
+    {
+        std::unique_lock grd(m_mtx4);
+        has_login[username] = t0;
+    }
     if (users.find(username) == users.end())
-        return "ç”¨æˆ·åé”™è¯¯";
+        return "ÓÃ»§Ãû´íÎó";
     if (users.at(username).password != password)
-        return "å¯†ç é”™è¯¯";
-    return "ç™»å½•æˆåŠŸ";
+        return "ÃÜÂë´íÎó";
+    return "µÇÂ¼³É¹¦";
+
 }
 
 std::string do_queryuser(std::string username) {
+    std::shared_lock grd(m_mtx3);
     auto &user = users.at(username);
     std::stringstream ss;
-    ss << "ç”¨æˆ·å: " << username << std::endl;
-    ss << "å­¦æ ¡:" << user.school << std::endl;
-    ss << "ç”µè¯: " << user.phone << std::endl;
+    ss << "ÓÃ»§Ãû: " << username << std::endl;
+    ss << "Ñ§Ğ£:" << user.school << std::endl;
+    ss << "µç»°: " << user.phone << std::endl;
     return ss.str();
 }
 
 
 struct ThreadPool {
+    std::vector<std::thread> m_pool;
+public:
     void create(std::function<void()> start) {
-        // ä½œä¸šè¦æ±‚3ï¼šå¦‚ä½•è®©è¿™ä¸ªçº¿ç¨‹ä¿æŒåœ¨åå°æ‰§è¡Œä¸è¦é€€å‡ºï¼Ÿ
-        // æç¤ºï¼šæ”¹æˆ async å’Œ future ä¸”ç”¨æ³•æ­£ç¡®ä¹Ÿå¯ä»¥åŠ åˆ†
+        // ×÷ÒµÒªÇó3£ºÈçºÎÈÃÕâ¸öÏß³Ì±£³ÖÔÚºóÌ¨Ö´ĞĞ²»ÒªÍË³ö£¿
+        // ÌáÊ¾£º¸Ä³É async ºÍ future ÇÒÓÃ·¨ÕıÈ·Ò²¿ÉÒÔ¼Ó·Ö
         std::thread thr(start);
+        m_pool.push_back(std::move(thr));
     }
+    ~ThreadPool(){
+        for(auto & t :m_pool) {
+            t.join();
+        }
+    }
+
 };
 
 ThreadPool tpool;
 
 
-namespace test {  // æµ‹è¯•ç”¨ä¾‹ï¼Ÿå‡ºæ°´ç”¨åŠ›ï¼
-std::string username[] = {"å¼ å¿ƒæ¬£", "ç‹é‘«ç£Š", "å½­äºæ–Œ", "èƒ¡åŸå"};
+namespace test {  // ²âÊÔÓÃÀı£¿³öË®ÓÃÁ¦£¡
+std::string username[] = {"ÕÅĞÄĞÀ", "ÍõöÎÀÚ", "ÅíÓÚ±ó", "ºúÔ­Ãû"};
 std::string password[] = {"hellojob", "anti-job42", "cihou233", "reCihou_!"};
-std::string school[] = {"ä¹ç™¾å…«åäº”å¤§é‹", "æµ™æ±Ÿå¤§é‹", "å‰‘æ¡¥å¤§é‹", "éº»ç»³ç†å·¥é‹é™¢"};
+std::string school[] = {"¾Å°Ù°ËÊ®Îå´óĞ¬", "Õã½­´óĞ¬", "½£ÇÅ´óĞ¬", "ÂéÉşÀí¹¤Ğ¬Ôº"};
 std::string phone[] = {"110", "119", "120", "12315"};
 }
 
@@ -84,6 +109,7 @@ int main() {
         });
     }
 
-    // ä½œä¸šè¦æ±‚4ï¼šç­‰å¾… tpool ä¸­æ‰€æœ‰çº¿ç¨‹éƒ½ç»“æŸåå†é€€å‡º
+    // ×÷ÒµÒªÇó4£ºµÈ´ı tpool ÖĞËùÓĞÏß³Ì¶¼½áÊøºóÔÙÍË³ö
+
     return 0;
 }
