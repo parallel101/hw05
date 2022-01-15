@@ -61,7 +61,9 @@ std::string do_login(std::string username, std::string password) {
 
         {
                 std::lock_guard<std::shared_mutex> lck(login_lock);
-                has_login[username] = now;
+                if (has_login.find(username) != has_login.end()) {
+                        has_login[username] = now;
+                }
         }
 
         return "登录成功";
