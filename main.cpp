@@ -30,7 +30,6 @@ std::shared_mutex login_mtx;
 std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
     std::cout << "username: " << username << std::endl;
     User user = {password, school, phone};
-    //std::unique_lock qrd{ users_mtx };
     std::unique_lock<std::shared_mutex> lock(users_mtx);
     users.emplace(username, user);
     if (users.emplace(username, user).second)
@@ -45,7 +44,6 @@ std::string do_login(std::string username, std::string password) {
     // long now = time(NULL);   // C 语言当前时间
     m_tpoint now = std::chrono::steady_clock::now();
     {
-        //std::shared_lock grd{ login_mtx };
         std::shared_lock<std::shared_mutex> lock(login_mtx);
 
 		if (has_login.find(username) != has_login.end()) {
@@ -55,14 +53,12 @@ std::string do_login(std::string username, std::string password) {
 		}
 		{
 
-            //std::unique_lock  grd{ login_mtx };
             std::unique_lock<std::shared_mutex> lock(login_mtx);
             has_login[username] = now;
 
 		}
     }
     
-    //std::shared_lock grd{ users_mtx };
     std::shared_lock<std::shared_mutex> lock(users_mtx);
     if (users.find(username) == users.end())
     {
@@ -80,7 +76,6 @@ std::string do_login(std::string username, std::string password) {
 }
 
 std::string do_queryuser(std::string username) {
-    //std::shared_lock grd{ users_mtx };
     std::shared_lock<std::shared_mutex> lock(users_mtx);
     std::cout << username << std::endl;
     if (users.find(username) == users.end())
