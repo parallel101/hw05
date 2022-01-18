@@ -91,20 +91,27 @@ std::string do_queryuser(std::string username) {
 
 constexpr unsigned int max_elements = 500;
 std::vector<std::thread> threads;
-//threads.reserve(max_elements);
+
 //
 //std::vector<int> asdfa;
 //asdfa.reserve(100);
 
 struct ThreadPool {
-    std::mutex m_mtx;
+    ThreadPool()
+    {
+		threads.reserve(max_elements);
+    }
     void create(std::function<void()> start) {
+
         // 作业要求3：如何让这个线程保持在后台执行不要退出？
         // 提示：改成 async 和 future 且用法正确也可以加分
         std::thread thr(start);
         std::lock_guard<std::mutex> lck(m_mtx);
         threads.push_back(std::move(thr));
     }
+public:
+	std::mutex m_mtx;
+
 };
 
 ThreadPool tpool;
@@ -120,7 +127,7 @@ namespace test {  // 测试用例？出水用力！
 }
 
 int main() {
-    for (int i = 0; i < 500; i++) {
+    for (int i = 0; i < max_elements; i++) {
     //for (int i = 0; i < 262144; i++) {
         tpool.create([&] {
             std::cout << do_register(test::username[rand() % 4], test::password[rand() % 4], test::school[rand() % 4], test::phone[rand() % 4]) << std::endl;
