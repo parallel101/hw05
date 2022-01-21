@@ -9,7 +9,6 @@
 #include <chrono>
 #include <mutex>
 #include <shared_mutex>
-#include <vector>
 #include <list>
 
 struct User {
@@ -36,14 +35,19 @@ std::string do_register(std::string username, std::string password, std::string 
 std::string do_login(std::string username, std::string password) {
     // 作业要求2：把这个登录计时器改成基于 chrono 的
     {
-        std::unique_lock ugrd(has_login_smtx);
         auto now = std::chrono::steady_clock::now(); // 当前时间
-        if (has_login.find(username) != has_login.end()) {
-            auto dt = now - has_login.at(username);  // 时间差
-            int sec = std::chrono::duration_cast<std::chrono::seconds>(dt).count();
-            return std::to_string(sec) + "秒内登录过";
+        {
+            std::shared_lock sgrd(has_login_smtx);
+            if (has_login.find(username) != has_login.end()) {
+                auto dt = now - has_login.at(username);  // 时间差
+                int sec = std::chrono::duration_cast<std::chrono::seconds>(dt).count();
+                return std::to_string(sec) + "秒内登录过";
+            }
         }
-        has_login[username] = now;
+        {
+            std::unique_lock ugrd(has_login_smtx);
+            has_login[username] = now;
+        }
     }
     {
         std::shared_lock sgrd(users_smtx);
@@ -58,7 +62,7 @@ std::string do_login(std::string username, std::string password) {
 std::string do_queryuser(std::string username) {
     std::shared_lock sgrd(users_smtx);
     if (users.find(username) == users.end())
-        return "query用户名错误";
+        return "query:用户名错误";
     auto &user = users.at(username);
     std::stringstream ss;
     ss << "用户名: " << username << std::endl;
@@ -106,7 +110,7 @@ std::string phone[] = {"110", "119", "120", "12315"};
 }
 
 int main() {
-    for (int i = 0; i < (262144>>8); i++) {
+    for (int i = 0; i < 262144; i++) {
         tpool.create([&] {
             std::cout << do_register(test::username[rand() % 4], test::password[rand() % 4], test::school[rand() % 4], test::phone[rand() % 4]) << std::endl;
         });
