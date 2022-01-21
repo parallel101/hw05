@@ -6,7 +6,11 @@
 #include <string>
 #include <thread>
 #include <map>
-
+#include <chrono>
+#include <mutex>
+#include <shared_mutex>
+#include <vector>
+#include <list>
 
 struct User {
     std::string password;
@@ -15,12 +19,14 @@ struct User {
 };
 
 std::map<std::string, User> users;
-std::map<std::string, long> has_login;  // 换成 std::chrono::seconds 之类的
+std::map<std::string, std::chrono::steady_clock::time_point> has_login;  // 换成 std::chrono::seconds 之类的
+std::shared_mutex users_smtx, has_login_smtx;
 
 // 作业要求1：把这些函数变成多线程安全的
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
 std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
     User user = {password, school, phone};
+    std::unique_lock ugrd(users_smtx);
     if (users.emplace(username, user).second)
         return "注册成功";
     else
@@ -29,21 +35,30 @@ std::string do_register(std::string username, std::string password, std::string 
 
 std::string do_login(std::string username, std::string password) {
     // 作业要求2：把这个登录计时器改成基于 chrono 的
-    long now = time(NULL);   // C 语言当前时间
-    if (has_login.find(username) != has_login.end()) {
-        int sec = now - has_login.at(username);  // C 语言算时间差
-        return std::to_string(sec) + "秒内登录过";
+    {
+        std::unique_lock ugrd(has_login_smtx);
+        auto now = std::chrono::steady_clock::now(); // 当前时间
+        if (has_login.find(username) != has_login.end()) {
+            auto dt = now - has_login.at(username);  // 时间差
+            int sec = std::chrono::duration_cast<std::chrono::seconds>(dt).count();
+            return std::to_string(sec) + "秒内登录过";
+        }
+        has_login[username] = now;
     }
-    has_login[username] = now;
-
-    if (users.find(username) == users.end())
-        return "用户名错误";
-    if (users.at(username).password != password)
-        return "密码错误";
+    {
+        std::shared_lock sgrd(users_smtx);
+        if (users.find(username) == users.end())
+            return "用户名错误";
+        if (users.at(username).password != password)
+            return "密码错误";
+    }
     return "登录成功";
 }
 
 std::string do_queryuser(std::string username) {
+    std::shared_lock sgrd(users_smtx);
+    if (users.find(username) == users.end())
+        return "query用户名错误";
     auto &user = users.at(username);
     std::stringstream ss;
     ss << "用户名: " << username << std::endl;
@@ -54,10 +69,29 @@ std::string do_queryuser(std::string username) {
 
 
 struct ThreadPool {
+    std::list<std::thread> pool;
+
     void create(std::function<void()> start) {
         // 作业要求3：如何让这个线程保持在后台执行不要退出？
         // 提示：改成 async 和 future 且用法正确也可以加分
         std::thread thr(start);
+        pool.push_back(std::move(thr));
+    }
+    void wait_finish() {
+        auto pt = pool.begin();
+        while (!pool.empty()) {
+            if (pt->joinable()) {
+                pt->join();
+                pt = pool.erase(pt);
+            }
+            else {
+                pt++;
+                if (pt==pool.end()) pt = pool.begin();
+            }
+        }
+    }
+    ~ThreadPool() {
+        wait_finish();
     }
 };
 
@@ -72,7 +106,7 @@ std::string phone[] = {"110", "119", "120", "12315"};
 }
 
 int main() {
-    for (int i = 0; i < 262144; i++) {
+    for (int i = 0; i < (262144>>8); i++) {
         tpool.create([&] {
             std::cout << do_register(test::username[rand() % 4], test::password[rand() % 4], test::school[rand() % 4], test::phone[rand() % 4]) << std::endl;
         });
