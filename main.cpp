@@ -1,4 +1,4 @@
-// 小彭老师作业05：假装是多线程 HTTP 服务器 - 富连网大厂面试官觉得很赞
+﻿// 小彭老师作业05：假装是多线程 HTTP 服务器 - 富连网大厂面试官觉得很赞
 #include <functional>
 #include <iostream>
 #include <sstream>
@@ -6,21 +6,33 @@
 #include <string>
 #include <thread>
 #include <map>
+#include <shared_mutex>
+#include <chrono>
+#include <queue>
 
 
 struct User {
     std::string password;
     std::string school;
     std::string phone;
+    friend std::ostream& operator<< (std::ostream& stream, const User& user) {
+        stream << user.password + " " + user.school + " " + user.phone;
+        return stream;
+    }
 };
 
 std::map<std::string, User> users;
-std::map<std::string, long> has_login;  // 换成 std::chrono::seconds 之类的
+std::map<std::string, std::chrono::seconds> has_login;  // 换成 std::chrono::seconds 之类的
+
+std::shared_mutex mutex_users;
+std::shared_mutex mutex_login;
 
 // 作业要求1：把这些函数变成多线程安全的
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
 std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
     User user = {password, school, phone};
+    // write
+    std::unique_lock lck(mutex_users);
     if (users.emplace(username, user).second)
         return "注册成功";
     else
@@ -29,13 +41,18 @@ std::string do_register(std::string username, std::string password, std::string 
 
 std::string do_login(std::string username, std::string password) {
     // 作业要求2：把这个登录计时器改成基于 chrono 的
-    long now = time(NULL);   // C 语言当前时间
-    if (has_login.find(username) != has_login.end()) {
-        int sec = now - has_login.at(username);  // C 语言算时间差
-        return std::to_string(sec) + "秒内登录过";
+    auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch());   
+    {
+        // read and write
+        std::unique_lock lck(mutex_login);
+        if (has_login.find(username) != has_login.end()) {
+            int sec = (now - has_login.at(username)).count();  // C 语言算时间差
+            return std::to_string(sec) + "秒内登录过";
+        }
+        has_login[username] = now;
     }
-    has_login[username] = now;
-
+    // read
+    std::shared_lock lck(mutex_users);
     if (users.find(username) == users.end())
         return "用户名错误";
     if (users.at(username).password != password)
@@ -44,6 +61,10 @@ std::string do_login(std::string username, std::string password) {
 }
 
 std::string do_queryuser(std::string username) {
+    // read
+    std::shared_lock lck(mutex_users);
+    if (users.find(username) == users.end()) return "查询失败, 无效的用户名";
+
     auto &user = users.at(username);
     std::stringstream ss;
     ss << "用户名: " << username << std::endl;
@@ -54,11 +75,58 @@ std::string do_queryuser(std::string username) {
 
 
 struct ThreadPool {
+    using Job = std::function<void()>;
+    ThreadPool() 
+        : m_stop_flag(false)
+        , m_poll_size(std::thread::hardware_concurrency())
+    {
+        for (size_t i = 0; i < m_poll_size; ++i) {
+            m_workers.emplace_back(
+                [&]() {
+                    while (true)
+                    {
+                        Job job;
+                        // 持续等待新任务进来
+                        {
+                            std::unique_lock lck(m_mutex);
+                            m_condition.wait(lck, [&](){
+                                return !m_jobs.empty() || m_stop_flag;
+                            });
+                            // 停止并且无任务
+                            if (m_stop_flag && m_jobs.empty()) return;
+
+                            job = m_jobs.front();
+                            m_jobs.pop();
+                        }
+                        job();
+                    }
+                }
+            );
+        }
+    }
     void create(std::function<void()> start) {
         // 作业要求3：如何让这个线程保持在后台执行不要退出？
         // 提示：改成 async 和 future 且用法正确也可以加分
-        std::thread thr(start);
+        {
+            std::unique_lock lck(m_mutex);
+            m_jobs.push(start);
+        }
+        m_condition.notify_one();
     }
+    ~ThreadPool() {
+        m_stop_flag = true;
+        m_condition.notify_all();
+        for (auto& th : m_workers) {
+            th.join();
+        }
+    }
+private:
+    bool m_stop_flag;
+    size_t m_poll_size;
+    std::condition_variable m_condition;
+    std::mutex m_mutex;
+    std::queue<Job> m_jobs;
+    std::vector<std::thread> m_workers;
 };
 
 ThreadPool tpool;
