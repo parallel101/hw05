@@ -7,10 +7,16 @@
 template <class T>
 class MTQueue {
     std::condition_variable m_cv;
-    std::mutex m_mtx;
+    mutable std::mutex m_mtx;
     std::vector<T> m_arr;
 
 public:
+
+    size_t size() const {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        return m_arr.size();
+    }
+
     T pop() {
         std::unique_lock lck(m_mtx);
         m_cv.wait(lck, [this] { return !m_arr.empty(); });
@@ -43,6 +49,7 @@ public:
     }
 };
 
+#ifdef MTQueue_TEST
 int main() {
     MTQueue<int> foods;
 
@@ -69,3 +76,4 @@ int main() {
 
     return 0;
 }
+#endif
