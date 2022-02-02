@@ -1,5 +1,6 @@
 // 小彭老师作业05：假装是多线程 HTTP 服务器 - 富连网大厂面试官觉得很赞
-#include <MTQueue.h>
+#include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdlib>
 #include <functional>
@@ -21,7 +22,8 @@ struct User {
 std::shared_mutex lk_users;
 std::shared_mutex lk_login;
 std::map<std::string, User> users;
-std::map<std::string, long> has_login;  // 换成 std::chrono::seconds 之类的
+std::map<std::string, std::chrono::steady_clock::time_point>
+    has_login;  // 换成 std::chrono::seconds 之类的
 
 // 作业要求1：把这些函数变成多线程安全的
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
@@ -37,10 +39,11 @@ std::string do_register(std::string username, std::string password,
 
 std::string do_login(std::string username, std::string password) {
   // 作业要求2：把这个登录计时器改成基于 chrono 的
-  long now = time(NULL);  // C 语言当前时间
+  std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
   std::unique_lock<std::shared_mutex> lk(lk_login);
   if (has_login.find(username) != has_login.end()) {
-    int sec = now - has_login.at(username);  // C 语言算时间差
+    auto tt = now - has_login.at(username);
+    int64_t sec = std::chrono::duration_cast<std::chrono::seconds>(tt).count();
     return std::to_string(sec) + "秒内登录过";
   }
   has_login[username] = now;
@@ -67,7 +70,7 @@ std::string do_queryuser(std::string username) {
 
 class ThreadPool {
  public:
-  explicit ThreadPool(size_t num_workers) : stop_(false) {
+  explicit ThreadPool(size_t num_workers) : stop_(false), counter_(0) {
     std::cout << "worker number: " << num_workers << std::endl;
     workers_.reserve(num_workers);
     for (size_t i = 0; i < num_workers; ++i) {
@@ -75,12 +78,13 @@ class ThreadPool {
         while (true) {
           std::unique_lock<std::mutex> lk(mtx_tasks_);
           cv_tasks_.wait(lk, [&]() { return stop_ || !tasks_.empty(); });
-          if (stop_) {
+          if (stop_ && tasks_.empty()) {
             break;
           }
           auto task = std::move(tasks_.front());
           tasks_.pop();
           task();
+          counter_++;
         }
       }));
     }
@@ -96,6 +100,7 @@ class ThreadPool {
     cv_tasks_.notify_all();
     for (auto& worker : workers_) worker.join();
     std::cout << "ThreadPool finished!" << std::endl;
+    std::cout << counter_ << " tasks done!" << std::endl;
   }
 
   void create(std::function<void()> start) {
@@ -113,6 +118,7 @@ class ThreadPool {
   std::mutex mtx_tasks_;
   std::condition_variable cv_tasks_;
   bool stop_;
+  std::atomic<int> counter_;
 };
 
 namespace test {  // 测试用例？出水用力！
@@ -124,8 +130,8 @@ std::string phone[] = {"110", "119", "120", "12315"};
 }  // namespace test
 
 int main() {
-  constexpr int M = 262144;
-  // constexpr int M = 10000;
+  //   constexpr int M = 262144;
+  constexpr int M = 10000;
 
   ThreadPool tpool(std::thread::hardware_concurrency());
 
