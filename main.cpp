@@ -24,6 +24,7 @@ std::map<std::string, std::chrono::steady_clock::time_point> has_login;
 std::mutex users_write_mutex;
 std::shared_mutex users_read_mutex;
 std::shared_mutex has_login_read_mutex;
+std::mutex has_login_write_mutex;
 
 // 作业要求1：把这些函数变成多线程安全的
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
@@ -41,7 +42,7 @@ std::string do_register(std::string username, std::string password, std::string 
 }
 std::string do_login(std::string username, std::string password) {
     // 作业要求2：把这个登录计时器改成基于 chrono 的
-    std::shared_lock grd(has_login_read_mutex);
+    std::shared_lock grd_r(has_login_read_mutex);
     auto t0 = std::chrono::steady_clock::now();
     if (has_login.find(username) != has_login.end()) {
         // int sec = now - has_login.at(username);  // C 语言算时间差
@@ -49,7 +50,9 @@ std::string do_login(std::string username, std::string password) {
         int sec = std::chrono::duration_cast<std::chrono::seconds>(dt).count();
         return std::to_string(sec) + "秒内登录过";
     }
+    std::unique_lock grd_w(has_login_write_mutex);
     has_login[username] = t0;
+    grd_w.unlock();
 
     if (users.find(username) == users.end())
         return "用户名错误";
