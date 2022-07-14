@@ -6,7 +6,10 @@
 #include <string>
 #include <thread>
 #include <map>
-
+#include <shared_mutex>
+#include "MTQueue.h"
+#include <atomic>
+#include <memory>
 
 struct User {
     std::string password;
@@ -15,12 +18,14 @@ struct User {
 };
 
 std::map<std::string, User> users;
-std::map<std::string, long> has_login;  // 换成 std::chrono::seconds 之类的
+std::map<std::string, std::chrono::steady_clock::time_point> has_login;  // 换成 std::chrono::seconds 之类的
+std::shared_mutex mtx1, mtx2;
 
 // 作业要求1：把这些函数变成多线程安全的
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
 std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
     User user = {password, school, phone};
+    std::unique_lock grd(mtx1);
     if (users.emplace(username, user).second)
         return "注册成功";
     else
@@ -29,13 +34,17 @@ std::string do_register(std::string username, std::string password, std::string 
 
 std::string do_login(std::string username, std::string password) {
     // 作业要求2：把这个登录计时器改成基于 chrono 的
-    long now = time(NULL);   // C 语言当前时间
+    auto now = std::chrono::steady_clock::now();   
+    std::unique_lock grd1(mtx2);
     if (has_login.find(username) != has_login.end()) {
-        int sec = now - has_login.at(username);  // C 语言算时间差
-        return std::to_string(sec) + "秒内登录过";
+        auto dt = now - has_login.at(username);  // C 语言算时间差
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(dt).count();
+        return std::to_string(ms) + "毫秒内登录过";
     }
     has_login[username] = now;
+    grd1.unlock();
 
+    std::shared_lock grd2(mtx1);
     if (users.find(username) == users.end())
         return "用户名错误";
     if (users.at(username).password != password)
@@ -44,6 +53,9 @@ std::string do_login(std::string username, std::string password) {
 }
 
 std::string do_queryuser(std::string username) {
+    std::shared_lock grd(mtx1);
+    if (users.find(username) == users.end())
+        return "用户名错误";
     auto &user = users.at(username);
     std::stringstream ss;
     ss << "用户名: " << username << std::endl;
@@ -52,17 +64,53 @@ std::string do_queryuser(std::string username) {
     return ss.str();
 }
 
+std::atomic<int> count = 0;
+int taskNums = 262144 * 3;
 
-struct ThreadPool {
-    void create(std::function<void()> start) {
-        // 作业要求3：如何让这个线程保持在后台执行不要退出？
-        // 提示：改成 async 和 future 且用法正确也可以加分
-        std::thread thr(start);
+struct Task{
+    void run(){
+        count += 1;
+        workItem();
     }
+
+    Task(std::function<void()> work) : workItem(work){}
+    std::function<void()> workItem;
 };
 
-ThreadPool tpool;
+struct ThreadPool {
+    void create(std::shared_ptr<Task> task) {
+        que.push(task);
+    }
 
+    ~ThreadPool(){
+
+        for(auto &t : pool)
+            t.join();
+        std::cout << "All threads complete!" << std::endl;
+        std::cout << "Total tasks : " << count << std::endl;
+    }
+
+    void start(){
+        for(size_t i=0; i<maxThreadsNum; ++i){
+            std::thread thr(std::bind(&ThreadPool::threadCallback, this));
+            pool.push_back(std::move(thr));
+        }
+    }
+
+    void threadCallback(){
+        while(count < taskNums){
+            auto task = que.pop();
+            if(task)
+                task->run();
+        }
+    }
+
+    unsigned maxThreadsNum = 1000;
+    std::vector<std::thread> pool;
+    MTQueue<std::shared_ptr<Task> > que;
+};
+
+ThreadPool tpool; 
 
 namespace test {  // 测试用例？出水用力！
 std::string username[] = {"张心欣", "王鑫磊", "彭于斌", "胡原名"};
@@ -72,16 +120,18 @@ std::string phone[] = {"110", "119", "120", "12315"};
 }
 
 int main() {
+    tpool.start();
+
     for (int i = 0; i < 262144; i++) {
-        tpool.create([&] {
+        tpool.create(std::make_shared<Task>([&] {
             std::cout << do_register(test::username[rand() % 4], test::password[rand() % 4], test::school[rand() % 4], test::phone[rand() % 4]) << std::endl;
-        });
-        tpool.create([&] {
+        }));
+        tpool.create(std::make_shared<Task>([&] {
             std::cout << do_login(test::username[rand() % 4], test::password[rand() % 4]) << std::endl;
-        });
-        tpool.create([&] {
+        }));
+        tpool.create(std::make_shared<Task>([&] {
             std::cout << do_queryuser(test::username[rand() % 4]) << std::endl;
-        });
+        }));
     }
 
     // 作业要求4：等待 tpool 中所有线程都结束后再退出

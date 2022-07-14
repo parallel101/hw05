@@ -43,7 +43,7 @@ public:
     }
 };
 
-int main() {
+/*int main() {
     MTQueue<int> foods;
 
     std::thread t1([&] {
@@ -68,4 +68,4 @@ int main() {
     t2.join();
 
     return 0;
-}
+}*/
