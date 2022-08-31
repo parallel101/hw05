@@ -6,6 +6,11 @@
 #include <string>
 #include <thread>
 #include <map>
+#include <chrono>
+#include <shared_mutex>
+#include <mutex>
+#include <future>
+#include <vector>
 
 
 struct User {
@@ -15,12 +20,14 @@ struct User {
 };
 
 std::map<std::string, User> users;
-std::map<std::string, long> has_login;  // 换成 std::chrono::seconds 之类的
+std::map<std::string, std::chrono::seconds> has_login;  // 换成 std::chrono::seconds 之类的
+std::mutex mtx;
 
 // 作业要求1：把这些函数变成多线程安全的
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
 std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
     User user = {password, school, phone};
+    std::lock_guard<std::mutex> grd(mtx);
     if (users.emplace(username, user).second)
         return "注册成功";
     else
@@ -29,10 +36,12 @@ std::string do_register(std::string username, std::string password, std::string 
 
 std::string do_login(std::string username, std::string password) {
     // 作业要求2：把这个登录计时器改成基于 chrono 的
-    long now = time(NULL);   // C 语言当前时间
+    auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch());
+    std::lock_guard<std::mutex> grd(mtx);
     if (has_login.find(username) != has_login.end()) {
-        int sec = now - has_login.at(username);  // C 语言算时间差
-        return std::to_string(sec) + "秒内登录过";
+        auto sec = now - has_login.at(username);
+        int sec_str = std::chrono::duration<int>(sec).count();
+        return std::to_string(sec_str) + "秒内登录过";
     }
     has_login[username] = now;
 
@@ -44,20 +53,40 @@ std::string do_login(std::string username, std::string password) {
 }
 
 std::string do_queryuser(std::string username) {
-    auto &user = users.at(username);
+    std::lock_guard<std::mutex> grd(mtx);
     std::stringstream ss;
-    ss << "用户名: " << username << std::endl;
-    ss << "学校:" << user.school << std::endl;
-    ss << "电话: " << user.phone << std::endl;
+    if (users.find(username) != users.end()) {
+        auto &user = users.at(username);
+        ss << "用户名: " << username << std::endl;
+        ss << "学校:" << user.school << std::endl;
+        ss << "电话: " << user.phone << std::endl;
+    } else {
+        ss << "用户名: " << username << " not found!" << std::endl;
+    }
     return ss.str();
 }
 
 
 struct ThreadPool {
+    std::vector<std::future<void>> futures;
+    int num_threads = 1e4;
+
     void create(std::function<void()> start) {
         // 作业要求3：如何让这个线程保持在后台执行不要退出？
         // 提示：改成 async 和 future 且用法正确也可以加分
-        std::thread thr(start);
+        futures.push_back(std::async(start));
+        if (futures.size() > num_threads) {
+            for (auto &ftr: futures) {
+                ftr.wait();
+            }
+            futures.clear();
+        }
+    }
+
+    ~ThreadPool() {
+        for (auto &ftr: futures) {
+            ftr.wait();
+        }
     }
 };
 
