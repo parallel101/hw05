@@ -7,6 +7,10 @@
 #include <thread>
 #include <map>
 
+#include <vector>
+#include <chrono>
+#include <shared_mutex>
+
 
 struct User {
     std::string password;
@@ -14,13 +18,17 @@ struct User {
     std::string phone;
 };
 
+typedef std::chrono::time_point<std::chrono::steady_clock> time_pt_t;
 std::map<std::string, User> users;
-std::map<std::string, long> has_login;  // 换成 std::chrono::seconds 之类的
+std::shared_mutex users_mut;
+std::map<std::string, time_pt_t> has_login;  // 换成 std::chrono::seconds 之类的
+std::shared_mutex logins_mut;
 
 // 作业要求1：把这些函数变成多线程安全的
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
 std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
     User user = {password, school, phone};
+    std::unique_lock lck(users_mut);
     if (users.emplace(username, user).second)
         return "注册成功";
     else
@@ -29,26 +37,39 @@ std::string do_register(std::string username, std::string password, std::string 
 
 std::string do_login(std::string username, std::string password) {
     // 作业要求2：把这个登录计时器改成基于 chrono 的
-    long now = time(NULL);   // C 语言当前时间
-    if (has_login.find(username) != has_login.end()) {
-        int sec = now - has_login.at(username);  // C 语言算时间差
-        return std::to_string(sec) + "秒内登录过";
-    }
-    has_login[username] = now;
 
-    if (users.find(username) == users.end())
-        return "用户名错误";
-    if (users.at(username).password != password)
-        return "密码错误";
+    auto now = std::chrono::steady_clock::now();
+
+    {
+        std::unique_lock lck(logins_mut);
+        if (auto item = has_login.find(username); item != has_login.end()) {
+            auto dif = now - item->second;
+            return std::to_string(std::chrono::duration_cast<std::chrono::seconds>(dif).count()) + "秒内登录过"; 
+        } else {
+            has_login[username] = now;
+        }
+    }
+    
+    {
+        std::shared_lock lck(users_mut);
+        if (auto item = users.find(username); item == users.end())
+            return "用户名错误";
+        else if (item->second.password != password)
+            return "密码错误";
+    }
     return "登录成功";
 }
 
 std::string do_queryuser(std::string username) {
-    auto &user = users.at(username);
+    std::shared_lock lck(users_mut);
     std::stringstream ss;
-    ss << "用户名: " << username << std::endl;
-    ss << "学校:" << user.school << std::endl;
-    ss << "电话: " << user.phone << std::endl;
+    if (auto item = users.find(username); item != users.end()) {
+        ss << "用户名: " << username << std::endl;
+        ss << "学校:" << item->second.school << std::endl;
+        ss << "电话: " << item->second.phone << std::endl;
+    } else {
+        ss << "用户 " << username << " not found."<< std::endl;
+    }
     return ss.str();
 }
 
@@ -57,8 +78,22 @@ struct ThreadPool {
     void create(std::function<void()> start) {
         // 作业要求3：如何让这个线程保持在后台执行不要退出？
         // 提示：改成 async 和 future 且用法正确也可以加分
-        std::thread thr(start);
+        pool.emplace_back(start);
+        if (pool.size() == NUM_THR) {
+            for (auto &thr : pool) 
+                thr.join();
+            pool.clear();
+        }
     }
+
+    ~ThreadPool() {
+        for (auto &thr : pool) {
+            thr.join();
+        }
+    }
+private:
+    static const int NUM_THR = 8192;
+    std::vector<std::thread> pool;
 };
 
 ThreadPool tpool;
