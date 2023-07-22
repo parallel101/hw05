@@ -3,9 +3,12 @@
 #include <iostream>
 #include <sstream>
 #include <cstdlib>
+#include <chrono>
 #include <string>
 #include <thread>
 #include <map>
+#include <mutex>
+#include <shared_mutex>
 
 
 struct User {
@@ -15,11 +18,14 @@ struct User {
 };
 
 std::map<std::string, User> users;
-std::map<std::string, long> has_login;  // 换成 std::chrono::seconds 之类的
+std::map<std::string, std::chrono::steady_clock::time_point> has_login;  // 换成 std::chrono::seconds 之类的
 
 // 作业要求1：把这些函数变成多线程安全的
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
 std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
+    // 写锁
+    std::shared_mutex m_mutx;
+    std::unique_lock grd(m_mutx);
     User user = {password, school, phone};
     if (users.emplace(username, user).second)
         return "注册成功";
@@ -29,10 +35,16 @@ std::string do_register(std::string username, std::string password, std::string 
 
 std::string do_login(std::string username, std::string password) {
     // 作业要求2：把这个登录计时器改成基于 chrono 的
-    long now = time(NULL);   // C 语言当前时间
+    // 读锁
+    std::shared_mutex m_rmutx;
+    std::shared_lock grd(m_rmutx);
+    // long now = time(NULL);   // C 语言当前时间
+    auto now = std::chrono::steady_clock::now();
     if (has_login.find(username) != has_login.end()) {
-        int sec = now - has_login.at(username);  // C 语言算时间差
-        return std::to_string(sec) + "秒内登录过";
+        auto t2 = std::chrono::steady_clock::now();
+        auto dt = now - t2;  // C 语言算时间差
+        int64_t sec = std::chrono::duration_cast<std::chrono::milliseconds>(dt).count();
+        return std::to_string(sec) + "毫秒内登录过";
     }
     has_login[username] = now;
 
@@ -44,6 +56,9 @@ std::string do_login(std::string username, std::string password) {
 }
 
 std::string do_queryuser(std::string username) {
+    // 读锁
+    std::shared_mutex m_rmutx;
+    std::shared_lock grd(m_rmutx);
     auto &user = users.at(username);
     std::stringstream ss;
     ss << "用户名: " << username << std::endl;
@@ -54,10 +69,18 @@ std::string do_queryuser(std::string username) {
 
 
 struct ThreadPool {
+    std::vector<std::thread> pool;
     void create(std::function<void()> start) {
         // 作业要求3：如何让这个线程保持在后台执行不要退出？
         // 提示：改成 async 和 future 且用法正确也可以加分
         std::thread thr(start);
+        pool.push_back(std::move(thr));
+    }
+
+    ~ThreadPool() {
+        for (auto &thr:pool) {
+            thr.join();
+        }
     }
 };
 
