@@ -1,3 +1,4 @@
+#pragma once
 #include <iostream>
 #include <thread>
 #include <vector>
@@ -43,29 +44,3 @@ public:
     }
 };
 
-int main() {
-    MTQueue<int> foods;
-
-    std::thread t1([&] {
-        for (int i = 0; i < 2; i++) {
-            auto food = foods.pop();
-            std::cout << "t1 got food:" << food << std::endl;
-        }
-    });
-
-    std::thread t2([&] {
-        for (int i = 0; i < 2; i++) {
-            auto food = foods.pop();
-            std::cout << "t2 got food:" << food << std::endl;
-        }
-    });
-
-    foods.push(42);
-    foods.push(233);
-    foods.push_many({666, 4399});
-
-    t1.join();
-    t2.join();
-
-    return 0;
-}
