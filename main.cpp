@@ -20,7 +20,7 @@ struct User {
 };
 
 std::map<std::string, User> users;
-std::map<std::string, std::chrono::steady_clock::time_point> has_login;  // 换成 std::chrono::seconds 之类的
+std::map<std::string, decltype(std::chrono::steady_clock::now())> has_login;  // 换成 std::chrono::seconds 之类的
 std::shared_mutex sm;
 std::shared_mutex sm_login;
 
@@ -46,16 +46,18 @@ std::string do_login(std::string username, std::string password) {
 //    has_login[username] = now;
 
     std::shared_lock grd_log_sl(sm_login);
-    auto find=has_login.find(username) != has_login.end();
-    grd_log_sl.unlock();
+//    auto find=;
 
     auto now=std::chrono::steady_clock::now();
-    if (find) {
+    if (has_login.find(username) != has_login.end()) {
         auto sec=now-has_login.at(username);
+
         using double_s=std::chrono::duration<double>;
         double s=std::chrono::duration_cast<double_s>(sec).count();
         return std::to_string(s) + "秒内登录过";
     }
+    grd_log_sl.unlock();
+
     std::unique_lock grd_log(sm_login);
     has_login[username] = now;
     grd_log.unlock();
@@ -69,13 +71,19 @@ std::string do_login(std::string username, std::string password) {
 }
 
 std::string do_queryuser(std::string username) {
-    std::shared_lock grd(sm);
-    auto &user = users.at(username);
-    grd.unlock();
     std::stringstream ss;
-    ss << "用户名: " << username << std::endl;
-    ss << "学校:" << user.school << std::endl;
-    ss << "电话: " << user.phone << std::endl;
+    try {
+        std::shared_lock grd(sm);
+        auto &user = users.at(username);
+        grd.unlock();
+        ss << "用户名: " << username << std::endl;
+        ss << "学校:" << user.school << std::endl;
+        ss << "电话: " << user.phone << std::endl;
+    }
+    catch (...) {
+        std::cout<<"username: "<<username<<"not found! "<<'\n';
+    }
+
     return ss.str();
 }
 
@@ -115,7 +123,7 @@ int main() {
 
     // 作业要求4：等待 tpool 中所有线程都结束后再退出
     for (auto &ret:tpool.fts) {
-            ret.get();
+            ret.wait();
     }
     return 0;
 }
