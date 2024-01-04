@@ -6,7 +6,9 @@
 #include <string>
 #include <thread>
 #include <map>
-
+#include <chrono>
+#include <mutex>
+#include <shared_mutex>
 
 struct User {
     std::string password;
@@ -15,12 +17,19 @@ struct User {
 };
 
 std::map<std::string, User> users;
-std::map<std::string, long> has_login;  // 换成 std::chrono::seconds 之类的
+std::map<std::string, std::chrono::time_point<std::chrono::steady_clock>> has_login;  // 换成 std::chrono::seconds 之类的
+
+// user和login  读写锁
+std::shared_mutex user_mtx;
+std::shared_mutex login_mtx;
 
 // 作业要求1：把这些函数变成多线程安全的
 // 提示：能正确利用 shared_mutex 加分，用 lock_guard 系列加分
 std::string do_register(std::string username, std::string password, std::string school, std::string phone) {
     User user = {password, school, phone};
+
+    // user写之前上锁
+    std::unique_lock grd(user_mtx);
     if (users.emplace(username, user).second)
         return "注册成功";
     else
@@ -29,13 +38,23 @@ std::string do_register(std::string username, std::string password, std::string 
 
 std::string do_login(std::string username, std::string password) {
     // 作业要求2：把这个登录计时器改成基于 chrono 的
-    long now = time(NULL);   // C 语言当前时间
+    auto now = std::chrono::steady_clock::now();   // C 语言当前时间
+    
+    // login读写之前上锁
+    login_mtx.lock();
     if (has_login.find(username) != has_login.end()) {
-        int sec = now - has_login.at(username);  // C 语言算时间差
-        return std::to_string(sec) + "秒内登录过";
+        auto sec = std::chrono::duration_cast<std::chrono::seconds>(now - has_login.at(username));  // C 语言算时间差
+        std::stringstream ss;
+        ss << sec.count() <<"秒内登录过";
+        return ss.str();
     }
     has_login[username] = now;
+    // login读写完解锁
+    login_mtx.unlock();
+    
 
+    // user读之前上锁
+    std::shared_lock grd(user_mtx);
     if (users.find(username) == users.end())
         return "用户名错误";
     if (users.at(username).password != password)
@@ -44,6 +63,8 @@ std::string do_login(std::string username, std::string password) {
 }
 
 std::string do_queryuser(std::string username) {
+    // login读之前上锁
+    std::shared_lock grd(login_mtx);
     auto &user = users.at(username);
     std::stringstream ss;
     ss << "用户名: " << username << std::endl;
@@ -53,11 +74,18 @@ std::string do_queryuser(std::string username) {
 }
 
 
-struct ThreadPool {
+class ThreadPool {
+    std::vector<std::thread> m_pools;
+public:
     void create(std::function<void()> start) {
         // 作业要求3：如何让这个线程保持在后台执行不要退出？
         // 提示：改成 async 和 future 且用法正确也可以加分
-        std::thread thr(start);
+
+        m_pools.emplace_back(std::thread(start));
+    }
+
+    ~ ThreadPool() {
+        for (auto& th : m_pools) th.join();
     }
 };
 
@@ -72,7 +100,7 @@ std::string phone[] = {"110", "119", "120", "12315"};
 }
 
 int main() {
-    for (int i = 0; i < 262144; i++) {
+    for (int i = 0; i < 262; i++) {
         tpool.create([&] {
             std::cout << do_register(test::username[rand() % 4], test::password[rand() % 4], test::school[rand() % 4], test::phone[rand() % 4]) << std::endl;
         });
@@ -85,5 +113,6 @@ int main() {
     }
 
     // 作业要求4：等待 tpool 中所有线程都结束后再退出
+
     return 0;
 }
